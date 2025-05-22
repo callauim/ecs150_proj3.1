@@ -39,6 +39,7 @@ static int mounted = 0;
 int fs_mount(const char *diskname)
 {
 	uint8_t block[BLOCK_SIZE];
+	size_t fat_size_bytes;
 
 	// Check if already mounted
 	if (mounted) {
@@ -70,12 +71,30 @@ int fs_mount(const char *diskname)
     	return -1;
 	}
 
-	// Allocate memory for FAT
-	fat = malloc(sb.data_block_count * sizeof(uint16_t));
+	// Validate superblock values to prevent buffer overflows
+	if (sb.data_block_count == 0 || sb.fat_block_count == 0) {
+		block_disk_close();
+		return -1;
+	}
+
+	// Calculate expected FAT size and validate
+	fat_size_bytes = sb.data_block_count * sizeof(uint16_t);
+	size_t expected_fat_blocks = (fat_size_bytes + BLOCK_SIZE - 1) / BLOCK_SIZE;
+	if (sb.fat_block_count != expected_fat_blocks) {
+		block_disk_close();
+		return -1;
+	}
+
+	// Allocate memory for FAT - allocate full blocks worth to avoid partial block issues
+	size_t fat_alloc_size = sb.fat_block_count * BLOCK_SIZE;
+	fat = malloc(fat_alloc_size);
 	if (!fat) {
 		block_disk_close();
     	return -1;
 	}
+
+	// Initialize FAT memory to zero
+	memset(fat, 0, fat_alloc_size);
 
 	// Read FAT blocks into our FAT array
 	for (int i = 0; i < sb.fat_block_count; i++) {
@@ -87,6 +106,14 @@ int fs_mount(const char *diskname)
 		}
 		// Copy the block data to the appropriate position in the FAT array
 		memcpy((uint8_t*)fat + i * BLOCK_SIZE, block, BLOCK_SIZE);
+	}
+
+	// Validate that FAT[0] is FAT_EOC as per specification
+	if (fat[0] != FAT_EOC) {
+		free(fat);
+		fat = NULL;
+		block_disk_close();
+		return -1;
 	}
 
 	// Read root directory
@@ -116,9 +143,11 @@ int fs_umount(void)
 		free(fat);
 		fat = NULL;
 	}
+	
 	memset(&sb, 0, sizeof(sb));
-    memset(root_dir, 0, sizeof(root_dir));
+	memset(root_dir, 0, sizeof(root_dir));
 	mounted = 0;
+	
 	return 0;
 }
 
