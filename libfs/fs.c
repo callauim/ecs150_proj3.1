@@ -13,26 +13,33 @@
 // Filesystem signature
 #define FS_SIGNATURE "ECS150FS"
 
+// Data Structs 
 struct __attribute__((packed)) superblock {
-	uint8_t signature[8];      /* Signature Length: 8*/
-	uint16_t total_blocks;     /* Total amount of blocks of virtual disk Length: 2*/
-	uint16_t root_dir_index;   /* Root directory block index Length: 2*/
-	uint16_t data_start_index; /* Data block start index Length: 2*/
-	uint16_t data_block_count; /* Amount of data blocks Length: 2*/
-	uint8_t fat_block_count;   /* Number of blocks for FAT Length: 1*/
-	uint8_t padding[4079];     /* Unused/Padding Length: 4079*/
+	uint8_t signature[8];
+	uint16_t total_blocks;
+	uint16_t root_dir_index;
+	uint16_t data_start_index;
+	uint16_t data_block_count;
+	uint8_t fat_block_count;
+	uint8_t padding[4079];
 };
 
 struct __attribute__((packed)) fat_entry {
-    uint16_t value;  /* 16 bit word Length: 2*/
+    uint16_t value; 
 };
 
 struct __attribute__((packed)) root_entry {
-	uint8_t filename[FS_FILENAME_LEN]; /* Filename (including NULL character) Length: 16*/
-	uint32_t file_size;                /* Size of the file (in bytes) Length: 4*/
-	uint16_t first_data_block;         /* Index of the first data block Length: 2*/
-	uint8_t padding[10];               /* Unused/Padding Length: 10*/
+	uint8_t filename[FS_FILENAME_LEN];
+	uint32_t file_size;
+	uint16_t first_data_block;
+	uint8_t padding[10];
 };
+
+// Global Vars
+static struct superblock sb;
+static uint16_t *fat = NULL;
+static struct root_entry root_dir[FS_FILE_MAX_COUNT];
+static int mounted = 0;
 
 int fs_mount(const char *diskname)
 {
@@ -43,14 +50,71 @@ int fs_mount(const char *diskname)
 	, and load the meta-information that is necessary to handle the file system operations.
 	*/
 
+	uint8_t block[BLOCK_SIZE];
+
+	// Check if disk file cannot be opened or found or is already mounted
+	if (mounted || block_disk_open(diskname) < 0) {
+		return -1;
+	}
+
+	// Read the superblock and copy to global var
+	if (block_read(0, block) < 0) {
+		block_disk_close();
+		return -1;
+	}
+	memcpy(&sb, block, sizeof(sb));
+
+	// Verify filesystem using superblock
+	if (memcmp(sb.signature, FS_SIGNATURE, 8) != 0 || sb.total_blocks != block_disk_count()) {
+    	block_disk_close();
+    	return -1;
+	}
+
+	// Allocate memory for FAT
+	fat = malloc(sb.data_block_count * sizeof(uint16_t));
+	if (!fat) {
+		block_disk_close();
+    	return -1;
+	}
+
+	// Read FAT blocks into our FAT array
+	for (int i = 0; i < sb.fat_block_count; i++) {
+		if (block_read(1 + i, block) < 0) {
+			free(fat);
+			fat = NULL;
+			block_disk_close();
+			return -1;
+		}
+		memcpy((uint8_t*)fat + i * BLOCK_SIZE, block, BLOCK_SIZE);
+	}
+
+	// Read root directory and copy to our root entry array
+	if (block_read(sb.root_dir_index, block) < 0) {
+		free(fat);
+		fat = NULL;
+		block_disk_close();
+		return -1;
+	}
+	memcpy(root_dir, block, sizeof(root_dir));
+
+
+	mounted = 1;
 	return 0;
 }
 
 int fs_umount(void)
 {
-	/* fs_umount() makes sure that the virtual disk is properly closed
-	and that all the internal data structures of the FS layer are properly cleaned. 
-	*/
+	if (!mounted){
+		return -1;
+	}
+	
+	if (block_disk_close() < 0) {
+		return -1;
+	}
+
+	free(fat);
+	fat = NULL;
+	mounted = 0;
 	return 0;
 }
 
