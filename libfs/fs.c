@@ -7,7 +7,6 @@
 #include "disk.h"
 #include "fs.h"
 
-
 // End of chain marker
 #define FAT_EOC 0xFFFF
 // Filesystem signature
@@ -22,10 +21,6 @@ struct __attribute__((packed)) superblock {
 	uint16_t data_block_count;
 	uint8_t fat_block_count;
 	uint8_t padding[4079];
-};
-
-struct __attribute__((packed)) fat_entry {
-    uint16_t value; 
 };
 
 struct __attribute__((packed)) root_entry {
@@ -43,29 +38,34 @@ static int mounted = 0;
 
 int fs_mount(const char *diskname)
 {
-	/* 
-	Don’t forget that your function fs_mount() should perform some error checking to verify that the file system has the expected format.
-	For example, the signature of the file system should correspond to the one defined by the specifications, the total amount of blocks should correspond to what block_disk_count() returns, etc.
-	You need to open the virtual disk, using the block API
-	, and load the meta-information that is necessary to handle the file system operations.
-	*/
-
 	uint8_t block[BLOCK_SIZE];
 
-	// Check if disk file cannot be opened or found or is already mounted
-	if (mounted || block_disk_open(diskname) < 0) {
+	// Check if already mounted
+	if (mounted) {
 		return -1;
 	}
 
-	// Read the superblock and copy to global var
+	// Open the disk
+	if (block_disk_open(diskname) < 0) {
+		return -1;
+	}
+
+	// Read the superblock
 	if (block_read(0, block) < 0) {
 		block_disk_close();
 		return -1;
 	}
 	memcpy(&sb, block, sizeof(sb));
 
-	// Verify filesystem using superblock
-	if (memcmp(sb.signature, FS_SIGNATURE, 8) != 0 || sb.total_blocks != block_disk_count()) {
+	// Verify filesystem signature
+	if (memcmp(sb.signature, FS_SIGNATURE, 8) != 0) {
+    	block_disk_close();
+    	return -1;
+	}
+
+	// Verify total block count matches disk
+	int disk_block_count = block_disk_count();
+	if (disk_block_count < 0 || sb.total_blocks != (uint16_t)disk_block_count) {
     	block_disk_close();
     	return -1;
 	}
@@ -85,10 +85,11 @@ int fs_mount(const char *diskname)
 			block_disk_close();
 			return -1;
 		}
+		// Copy the block data to the appropriate position in the FAT array
 		memcpy((uint8_t*)fat + i * BLOCK_SIZE, block, BLOCK_SIZE);
 	}
 
-	// Read root directory and copy to our root entry array
+	// Read root directory
 	if (block_read(sb.root_dir_index, block) < 0) {
 		free(fat);
 		fat = NULL;
@@ -97,14 +98,13 @@ int fs_mount(const char *diskname)
 	}
 	memcpy(root_dir, block, sizeof(root_dir));
 
-
 	mounted = 1;
 	return 0;
 }
 
 int fs_umount(void)
 {
-	if (!mounted){
+	if (!mounted) {
 		return -1;
 	}
 	
@@ -112,8 +112,12 @@ int fs_umount(void)
 		return -1;
 	}
 
-	free(fat);
-	fat = NULL;
+	if (fat) {
+		free(fat);
+		fat = NULL;
+	}
+	memset(&sb, 0, sizeof(sb));
+    memset(root_dir, 0, sizeof(root_dir));
 	mounted = 0;
 	return 0;
 }
