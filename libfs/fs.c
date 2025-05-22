@@ -120,7 +120,35 @@ int fs_umount(void)
 
 int fs_info(void)
 {
-	/* Once you’re able to mount a file system, you can implement the function fs_info() 
-	which prints some information about the mounted file system and make sure that the output corresponds exactly to the reference program. */
+	if (!mounted) {
+		return -1;
+	}
+
+	// Count free FAT entries (entries with value 0, excluding entry 0 which is always FAT_EOC)
+	int fat_free_count = 0;
+	for (int i = 1; i < sb.data_block_count; i++) {
+		if (fat[i] == 0) {
+			fat_free_count++;
+		}
+	}
+
+	// Count free root directory entries (entries where first character of filename is NULL)
+	int rdir_free_count = 0;
+	for (int i = 0; i < FS_FILE_MAX_COUNT; i++) {
+		if (root_dir[i].filename[0] == '\0') {
+			rdir_free_count++;
+		}
+	}
+
+	// Print filesystem information
+	printf("FS Info:\n");
+	printf("total_blk_count=%d\n", sb.total_blocks);
+	printf("fat_blk_count=%d\n", sb.fat_block_count);
+	printf("rdir_blk=%d\n", sb.root_dir_index);
+	printf("data_blk=%d\n", sb.data_start_index);
+	printf("data_blk_count=%d\n", sb.data_block_count);
+	printf("fat_free_ratio=%d/%d\n", fat_free_count, sb.data_block_count);
+	printf("rdir_free_ratio=%d/%d\n", rdir_free_count, FS_FILE_MAX_COUNT);
+
 	return 0;
 }
